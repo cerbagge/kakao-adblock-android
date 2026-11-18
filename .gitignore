@@ -1,0 +1,5 @@
+build/
+keystore/
+test-out/
+*.xapk
+*.apk

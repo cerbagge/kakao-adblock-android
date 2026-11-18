@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        shell: pwsh
+        run: |
+          $sm = Join-Path $env:ANDROID_HOME "cmdline-tools\latest\bin\sdkmanager.bat"
+          "y`ny`ny`ny`ny`n" | & $sm --licenses | Out-Null
+          & $sm "platforms;android-35" "build-tools;35.0.0" | Out-Null
+
+      - name: Unit test
+        shell: pwsh
+        run: |
+          javac -encoding UTF-8 -d test-out src/com/cerbagge/kakaoadblock/Dns.java test/DnsTest.java
+          java -cp test-out com.cerbagge.kakaoadblock.DnsTest
+
+      - name: Restore signing key
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        shell: pwsh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          New-Item -ItemType Directory -Force keystore | Out-Null
+          [IO.File]::WriteAllBytes("keystore/release.jks", [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+          [IO.File]::WriteAllText("keystore/password.txt", $env:KEYSTORE_PASSWORD)
+
+      - name: Build APK
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Rename APK
+        shell: pwsh
+        run: |
+          $name = "kakao-adblock-${{ github.ref_name }}.apk".Replace('/', '-')
+          Copy-Item build/kakao-adblock.apk $name
+          "APK=$name" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kakao-adblock-apk
+          path: ${{ env.APK }}
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK }}
+          generate_release_notes: true
+
+env:
+  KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
